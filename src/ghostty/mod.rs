@@ -463,6 +463,36 @@ impl CellWide {
     }
 }
 
+/// Row-level OSC 133 semantic prompt state, as tracked by the VT.
+///
+/// A `Prompt` row is the first line of a shell/agent prompt zone (OSC 133 `A`);
+/// a `Continuation` row is a wrapped continuation of that zone. Agents such as
+/// pi wrap each message in an OSC 133 zone, so `Prompt` rows mark message
+/// boundaries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RowSemanticPrompt {
+    None,
+    Prompt,
+    Continuation,
+}
+
+impl RowSemanticPrompt {
+    fn from_raw(value: ffi::GhosttyRowSemanticPrompt) -> Self {
+        match value {
+            ffi::GhosttyRowSemanticPrompt_GHOSTTY_ROW_SEMANTIC_PROMPT => Self::Prompt,
+            ffi::GhosttyRowSemanticPrompt_GHOSTTY_ROW_SEMANTIC_PROMPT_CONTINUATION => {
+                Self::Continuation
+            }
+            _ => Self::None,
+        }
+    }
+
+    /// Whether this row starts a prompt zone (message boundary).
+    pub fn is_prompt_start(self) -> bool {
+        matches!(self, Self::Prompt)
+    }
+}
+
 type WritePtyCallback = dyn FnMut(&[u8]) + Send;
 
 const MAX_CLIPBOARD_BYTES: usize = 192 * 1024;
@@ -1138,6 +1168,31 @@ impl Terminal {
             });
         }
         Ok(rows)
+    }
+
+    /// Read the OSC 133 semantic prompt state of an absolute screen row `y`
+    /// (y=0 is the top of the scrollback history).
+    ///
+    /// Screen-coordinate lookups can traverse the scrollback page list, so
+    /// callers should scan bounded ranges rather than the whole buffer on hot
+    /// paths.
+    pub fn row_semantic_prompt(&self, y: u32) -> Result<RowSemanticPrompt, Error> {
+        let grid_ref = self.grid_ref(ghostty_screen_point(0, y))?;
+        let mut row: ffi::GhosttyRow = 0;
+        unsafe {
+            ffi::ghostty_grid_ref_row(&grid_ref, &mut row).into_result()?;
+        }
+        let mut out: ffi::GhosttyRowSemanticPrompt =
+            ffi::GhosttyRowSemanticPrompt_GHOSTTY_ROW_SEMANTIC_NONE;
+        unsafe {
+            ffi::ghostty_row_get(
+                row,
+                ffi::GhosttyRowData_GHOSTTY_ROW_DATA_SEMANTIC_PROMPT,
+                (&mut out as *mut ffi::GhosttyRowSemanticPrompt).cast(),
+            )
+            .into_result()?;
+        }
+        Ok(RowSemanticPrompt::from_raw(out))
     }
 
     fn viewport_graphemes_and_style(&self, x: u16, y: u32) -> Result<(Vec<u32>, CellStyle), Error> {
@@ -3270,6 +3325,35 @@ mod tests {
             row_text.push_str(&cell_text);
         }
         row_text.trim_end().to_owned()
+    }
+
+    #[test]
+    fn row_semantic_prompt_marks_osc133_prompt_lines() {
+        // Each "message" is an OSC 133 prompt zone (A..B) on one line followed
+        // by two output lines, mirroring how agents like pi frame messages.
+        let mut terminal = Terminal::new(20, 4, 200).unwrap();
+        let messages = 5usize;
+        for i in 0..messages {
+            terminal.write(format!("\x1b]133;A\x07prompt {i}\r\n").as_bytes());
+            terminal.write(b"\x1b]133;B\x07");
+            terminal.write(b"output a\r\noutput b\r\n");
+        }
+
+        let total = terminal.total_rows().unwrap() as u32;
+        let prompt_rows: Vec<u32> = (0..total)
+            .filter(|&y| {
+                terminal
+                    .row_semantic_prompt(y)
+                    .expect("row semantic prompt")
+                    .is_prompt_start()
+            })
+            .collect();
+
+        assert_eq!(
+            prompt_rows.len(),
+            messages,
+            "expected one prompt-start row per OSC 133 zone, got {prompt_rows:?}"
+        );
     }
 
     fn build_info_bool(data: ffi::GhosttyBuildInfo) -> bool {

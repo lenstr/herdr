@@ -47,7 +47,7 @@ pub(crate) use self::terminal::{
 };
 pub use self::{
     state::PaneState,
-    terminal::{InputState, ScrollMetrics, TerminalCursorState},
+    terminal::{InputState, PromptJumpDirection, ScrollMetrics, TerminalCursorState},
 };
 
 const RELEASE_REACQUIRE_SUPPRESSION: std::time::Duration = std::time::Duration::from_secs(1);
@@ -2590,6 +2590,10 @@ impl PaneRuntime {
         motion: crate::pane::TerminalWordMotion,
     ) -> Option<crate::pane::TerminalTextPoint> {
         self.terminal.word_motion_target(row, col, motion)
+    }
+
+    pub fn prompt_scroll_offset(&self, direction: PromptJumpDirection) -> Option<usize> {
+        self.terminal.prompt_scroll_offset(direction)
     }
 
     pub fn input_state(&self) -> Option<InputState> {

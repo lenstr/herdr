@@ -1803,6 +1803,33 @@ impl AppState {
         }
     }
 
+    /// Scroll the focused pane to the nearest OSC 133 prompt mark (message
+    /// boundary) in `direction`. No-op if the focused pane has no such mark.
+    pub(super) fn jump_focused_pane_prompt(
+        &self,
+        terminal_runtimes: &TerminalRuntimeRegistry,
+        direction: crate::pane::PromptJumpDirection,
+    ) {
+        let Some(ws_idx) = self.active else {
+            return;
+        };
+        let Some(pane_id) = self
+            .workspaces
+            .get(ws_idx)
+            .and_then(crate::workspace::Workspace::focused_pane_id)
+        else {
+            return;
+        };
+        let Some(rt) = self.runtime_for_pane_in_workspace(terminal_runtimes, ws_idx, pane_id)
+        else {
+            return;
+        };
+        let Some(offset) = rt.prompt_scroll_offset(direction) else {
+            return;
+        };
+        rt.set_scroll_offset_from_bottom(offset);
+    }
+
     pub(super) fn scrollbar_target_at(
         &self,
         terminal_runtimes: &TerminalRuntimeRegistry,

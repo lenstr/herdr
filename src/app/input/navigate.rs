@@ -378,6 +378,14 @@ impl App {
             }
             NavigateAction::EditScrollback => {}
             NavigateAction::CopyMode => self.state.enter_copy_mode(&self.terminal_runtimes),
+            NavigateAction::JumpPromptOlder => self.state.jump_focused_pane_prompt(
+                &self.terminal_runtimes,
+                crate::pane::PromptJumpDirection::Older,
+            ),
+            NavigateAction::JumpPromptNewer => self.state.jump_focused_pane_prompt(
+                &self.terminal_runtimes,
+                crate::pane::PromptJumpDirection::Newer,
+            ),
             NavigateAction::Zoom => {
                 self.zoom_focused_pane_via_api();
                 leave_navigate_mode(&mut self.state);
@@ -1365,6 +1373,8 @@ pub(crate) enum NavigateAction {
     ClosePane,
     EditScrollback,
     CopyMode,
+    JumpPromptOlder,
+    JumpPromptNewer,
     Zoom,
     EnterResizeMode,
     ToggleSidebar,
@@ -1395,6 +1405,8 @@ fn copy_mode_survives_prefix_action(action: NavigateAction) -> bool {
             | NavigateAction::FocusPaneDown
             | NavigateAction::FocusPaneUp
             | NavigateAction::FocusPaneRight
+            | NavigateAction::JumpPromptOlder
+            | NavigateAction::JumpPromptNewer
             | NavigateAction::CyclePaneNext
             | NavigateAction::CyclePanePrevious
             | NavigateAction::LastPane
@@ -1495,6 +1507,8 @@ fn non_indexed_action_for_key(
         (&kb.rename_pane, NavigateAction::RenamePane),
         (&kb.edit_scrollback, NavigateAction::EditScrollback),
         (&kb.copy_mode, NavigateAction::CopyMode),
+        (&kb.jump_prompt_up, NavigateAction::JumpPromptOlder),
+        (&kb.jump_prompt_down, NavigateAction::JumpPromptNewer),
         (&kb.focus_pane_left, NavigateAction::FocusPaneLeft),
         (&kb.focus_pane_down, NavigateAction::FocusPaneDown),
         (&kb.focus_pane_up, NavigateAction::FocusPaneUp),
@@ -1737,6 +1751,18 @@ pub(super) fn execute_navigate_action_in_context(
         }
         NavigateAction::EditScrollback => {}
         NavigateAction::CopyMode => state.enter_copy_mode(terminal_runtimes),
+        NavigateAction::JumpPromptOlder => {
+            state.jump_focused_pane_prompt(
+                terminal_runtimes,
+                crate::pane::PromptJumpDirection::Older,
+            );
+        }
+        NavigateAction::JumpPromptNewer => {
+            state.jump_focused_pane_prompt(
+                terminal_runtimes,
+                crate::pane::PromptJumpDirection::Newer,
+            );
+        }
         NavigateAction::Zoom => {
             state.toggle_zoom();
             leave_navigate_mode(state);

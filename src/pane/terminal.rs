@@ -78,6 +78,19 @@ pub(crate) enum TerminalWordMotion {
 
 const COPY_MODE_WORD_SEPARATORS: &str = "!\"#$%&'()*+,-./:;<=>?@[\\]^`{|}~";
 
+/// Direction for jumping between OSC 133 prompt marks in a pane's scrollback.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PromptJumpDirection {
+    /// Toward older output (scroll up into history).
+    Older,
+    /// Toward newer output (scroll down toward the live bottom).
+    Newer,
+}
+
+/// Upper bound on rows scanned for a prompt mark in a single jump, so a buffer
+/// with no marks in the requested direction cannot stall the input thread.
+const PROMPT_JUMP_MAX_SCAN_ROWS: usize = 200_000;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TerminalCursorState {
     pub x: u16,
@@ -381,6 +394,10 @@ impl PaneTerminal {
             (cols, rows, active_screen)
         };
         Some((RetainedTextBuffer::new_search(cols, rows, 0), active_screen))
+    }
+
+    pub fn prompt_scroll_offset(&self, direction: PromptJumpDirection) -> Option<usize> {
+        self.ghostty.prompt_scroll_offset(direction)
     }
 
     pub fn input_state(&self) -> Option<InputState> {
@@ -1645,6 +1662,44 @@ impl GhosttyPaneTerminal {
             max_offset_from_bottom: scrollbar.total.saturating_sub(scrollbar.len),
             viewport_rows: scrollbar.len,
         })
+    }
+
+    /// Find the nearest OSC 133 prompt-start row in `direction` from the current
+    /// viewport top and return the `offset_from_bottom` that places it at the top
+    /// of the viewport. Returns `None` if there is no such mark (or no scrollback).
+    pub fn prompt_scroll_offset(&self, direction: PromptJumpDirection) -> Option<usize> {
+        let core = self.core.lock().ok()?;
+        let scrollbar = core.terminal.scrollbar().ok()?;
+        let total = scrollbar.total;
+        let len = scrollbar.len;
+        // No history to navigate.
+        if total <= len {
+            return None;
+        }
+        let current_top = scrollbar.offset;
+
+        let is_prompt_start = |y: usize| -> bool {
+            core.terminal
+                .row_semantic_prompt(y as u32)
+                .map(|state| state.is_prompt_start())
+                .unwrap_or(false)
+        };
+
+        // Scan at most PROMPT_JUMP_MAX_SCAN_ROWS rows away from the current top
+        // to bound worst-case latency when there are no marks in this direction.
+        let target_top = match direction {
+            PromptJumpDirection::Older => (current_top.saturating_sub(PROMPT_JUMP_MAX_SCAN_ROWS)
+                ..current_top)
+                .rev()
+                .find(|&y| is_prompt_start(y)),
+            PromptJumpDirection::Newer => ((current_top + 1)
+                ..total.min(current_top + 1 + PROMPT_JUMP_MAX_SCAN_ROWS))
+                .find(|&y| is_prompt_start(y)),
+        }?;
+
+        // Place target_top at the top of the viewport. If the mark is within the
+        // last screen, this clamps to 0 (the live bottom).
+        Some(total.saturating_sub(target_top + len))
     }
 
     pub fn keyboard_protocol(&self) -> Option<crate::input::KeyboardProtocol> {
@@ -4958,6 +5013,111 @@ mod tests {
         }
 
         assert!(pane.visible_text().contains("000000"));
+    }
+
+    fn write_osc133_prompt_messages(terminal: &mut crate::ghostty::Terminal, count: usize) {
+        for i in 0..count {
+            terminal.write(format!("\x1b]133;A\x07prompt {i}\r\n").as_bytes());
+            terminal.write(b"\x1b]133;B\x07");
+            terminal.write(format!("output {i}\r\n").as_bytes());
+        }
+    }
+
+    #[test]
+    fn prompt_scroll_offset_follows_nearest_osc133_prompt_marks() {
+        let (tx, _rx) = mpsc::channel(4);
+        let mut terminal = crate::ghostty::Terminal::new(40, 4, 200).unwrap();
+        write_osc133_prompt_messages(&mut terminal, 8);
+
+        let scrollbar = terminal.scrollbar().expect("scrollbar before pane");
+        let total = scrollbar.total;
+        let len = scrollbar.len;
+        let prompt_rows: Vec<usize> = (0..total)
+            .filter(|&y| {
+                terminal
+                    .row_semantic_prompt(y as u32)
+                    .expect("row semantic prompt")
+                    .is_prompt_start()
+            })
+            .collect();
+        assert!(
+            prompt_rows.len() >= 4,
+            "expected prompt rows, got {prompt_rows:?}"
+        );
+
+        let pane = GhosttyPaneTerminal::new(terminal, tx).unwrap();
+        let bottom_metrics = pane.scroll_metrics().expect("bottom scroll metrics");
+        assert_eq!(bottom_metrics.offset_from_bottom, 0);
+
+        let current_top = total.saturating_sub(len);
+        let expected_older_row = prompt_rows
+            .iter()
+            .rev()
+            .copied()
+            .find(|&row| row < current_top)
+            .expect("older prompt row");
+        let expected_older_offset = total.saturating_sub(expected_older_row + len);
+        assert_eq!(
+            pane.prompt_scroll_offset(PromptJumpDirection::Older),
+            Some(expected_older_offset)
+        );
+
+        pane.set_scroll_offset_from_bottom(expected_older_offset);
+        let expected_previous_row = prompt_rows
+            .iter()
+            .rev()
+            .copied()
+            .find(|&row| row < expected_older_row)
+            .expect("previous prompt row");
+        assert_eq!(
+            pane.prompt_scroll_offset(PromptJumpDirection::Older),
+            Some(total.saturating_sub(expected_previous_row + len)),
+            "older jumps should exclude the current viewport top"
+        );
+
+        let expected_newer_row = prompt_rows
+            .iter()
+            .copied()
+            .find(|&row| row > expected_older_row)
+            .expect("newer prompt row");
+        assert_eq!(
+            pane.prompt_scroll_offset(PromptJumpDirection::Newer),
+            Some(total.saturating_sub(expected_newer_row + len))
+        );
+
+        let last_prompt = *prompt_rows.last().expect("last prompt row");
+        let before_last_prompt = prompt_rows[prompt_rows.len() - 2];
+        let before_last_offset = total.saturating_sub(before_last_prompt + len);
+        assert!(
+            before_last_offset > 0,
+            "test setup should scroll above bottom"
+        );
+        assert_eq!(
+            total.saturating_sub(last_prompt + len),
+            0,
+            "test setup should place the last prompt in the live bottom viewport"
+        );
+        pane.set_scroll_offset_from_bottom(before_last_offset);
+        assert_eq!(
+            pane.prompt_scroll_offset(PromptJumpDirection::Newer),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn prompt_scroll_offset_returns_none_without_history_or_marks() {
+        let (tx, _rx) = mpsc::channel(4);
+        let mut no_history = crate::ghostty::Terminal::new(40, 4, 200).unwrap();
+        no_history.write(b"one\r\ntwo");
+        let pane = GhosttyPaneTerminal::new(no_history, tx.clone()).unwrap();
+        assert_eq!(pane.prompt_scroll_offset(PromptJumpDirection::Older), None);
+        assert_eq!(pane.prompt_scroll_offset(PromptJumpDirection::Newer), None);
+
+        let mut no_marks = crate::ghostty::Terminal::new(40, 4, 200).unwrap();
+        write_numbered_lines(&mut no_marks, 12);
+        let pane = GhosttyPaneTerminal::new(no_marks, tx).unwrap();
+        assert_eq!(pane.prompt_scroll_offset(PromptJumpDirection::Older), None);
+        assert_eq!(pane.prompt_scroll_offset(PromptJumpDirection::Newer), None);
     }
 
     #[test]

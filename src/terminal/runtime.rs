@@ -311,6 +311,13 @@ impl TerminalRuntime {
         self.0.word_motion_target(row, col, motion)
     }
 
+    pub fn prompt_scroll_offset(
+        &self,
+        direction: crate::pane::PromptJumpDirection,
+    ) -> Option<usize> {
+        self.0.prompt_scroll_offset(direction)
+    }
+
     pub fn input_state(&self) -> Option<crate::pane::InputState> {
         self.0.input_state()
     }

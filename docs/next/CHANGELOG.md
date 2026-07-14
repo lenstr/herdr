@@ -158,6 +158,7 @@
 - Added `ui.copy_on_select` to disable automatic clipboard copying after mouse selection while keeping the selection visible.
 - Added configurable row layouts for expanded Space and Agent sidebar entries, including built-in display tokens, per-agent overrides, custom metadata tokens, and pane/workspace metadata reporting through the CLI and socket API.
 - Added independent `row_gap` settings for expanded Space and Agent sidebar entries.
+- Panes can jump between OSC 133 prompt marks with `prefix+comma` / `prefix+period`.
 - Copy mode now supports literal smart-case search with `/` and `?`, repeating with `n` and `N`, match highlighting, and tmux-style cross-line `w`/`b`/`e` word motions. (#1230)
 - Added Maki agent support. (#1301, #1302, thanks @tontinton)
 - Added a searchable, version-matched configuration reference and a troubleshooting guide covering duplicate terminal key events, modified-arrow shell bindings, updates, remote access, and logs. (#1116, #1370)

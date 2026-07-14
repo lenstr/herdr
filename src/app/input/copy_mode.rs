@@ -1055,6 +1055,16 @@ mod tests {
         })
     }
 
+    fn osc133_prompt_messages(count: usize) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        for i in 0..count {
+            bytes.extend_from_slice(format!("\x1b]133;A\x07prompt {i}\r\n").as_bytes());
+            bytes.extend_from_slice(b"\x1b]133;B\x07");
+            bytes.extend_from_slice(format!("output {i}\r\n").as_bytes());
+        }
+        bytes
+    }
+
     fn app_with_split_copy_runtime(
         bytes: &[u8],
         first_runtime: impl FnOnce(u16, u16, &[u8]) -> crate::terminal::TerminalRuntime,
@@ -1260,6 +1270,38 @@ mod tests {
         assert_eq!(app.state.mode, Mode::Copy);
         assert_eq!(app.state.copy_mode, Some(copy_mode));
         assert_eq!(app.state.workspaces[0].tabs[0].layout.focused(), first_pane);
+    }
+
+    #[tokio::test]
+    async fn copy_mode_prefix_prompt_jump_keeps_copy_mode_and_scrolled_viewport() {
+        let bytes = osc133_prompt_messages(16);
+        let (mut app, pane_id) = app_with_copy_scrollback(&bytes);
+        app.state.enter_copy_mode(&app.terminal_runtimes);
+
+        let newer_offset = app
+            .state
+            .runtime_for_pane_in_workspace(&app.terminal_runtimes, 0, pane_id)
+            .and_then(|rt| rt.prompt_scroll_offset(crate::pane::PromptJumpDirection::Older))
+            .expect("older prompt from live bottom");
+        app.state
+            .set_pane_scroll_offset(&app.terminal_runtimes, pane_id, newer_offset);
+        let expected_offset = app
+            .state
+            .runtime_for_pane_in_workspace(&app.terminal_runtimes, 0, pane_id)
+            .and_then(|rt| rt.prompt_scroll_offset(crate::pane::PromptJumpDirection::Older))
+            .expect("older prompt from scrolled copy viewport");
+
+        app.handle_key(TerminalKey::new(
+            app.state.prefix_code,
+            app.state.prefix_mods,
+        ))
+        .await;
+        app.handle_key(TerminalKey::new(KeyCode::Char(','), KeyModifiers::empty()))
+            .await;
+
+        assert_eq!(app.state.mode, Mode::Copy);
+        assert!(app.state.copy_mode.is_some());
+        assert_eq!(copy_mode_offset_from_bottom(&app, pane_id), expected_offset);
     }
 
     #[tokio::test]

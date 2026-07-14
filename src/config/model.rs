@@ -405,6 +405,13 @@ pub struct KeysConfig {
     pub edit_scrollback: BindingConfig,
     /// Enter keyboard copy mode for the focused pane. Default: "prefix+[".
     pub copy_mode: BindingConfig,
+    /// Scroll the focused pane to the previous (older) OSC 133 prompt mark —
+    /// e.g. the previous agent/shell message. Default: "prefix+comma". Handled
+    /// by herdr directly, so it does not depend on host-terminal keybinds.
+    pub jump_prompt_up: BindingConfig,
+    /// Scroll the focused pane to the next (newer) OSC 133 prompt mark.
+    /// Default: "prefix+period". See `jump_prompt_up`.
+    pub jump_prompt_down: BindingConfig,
     /// Focus the pane to the left. Default: "prefix+h".
     pub focus_pane_left: BindingConfig,
     /// Focus the pane below. Default: "prefix+j".
@@ -525,6 +532,10 @@ pub(crate) struct KeysConfigOverlay {
     #[serde(skip_serializing_if = "Option::is_none")]
     copy_mode: Option<BindingConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    jump_prompt_up: Option<BindingConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    jump_prompt_down: Option<BindingConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     focus_pane_left: Option<BindingConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
     focus_pane_down: Option<BindingConfig>,
@@ -617,6 +628,8 @@ impl<'de> Deserialize<'de> for KeysConfig {
         apply_field!(rename_pane);
         apply_field!(edit_scrollback);
         apply_field!(copy_mode);
+        apply_field!(jump_prompt_up);
+        apply_field!(jump_prompt_down);
         apply_field!(focus_pane_left);
         apply_field!(focus_pane_down);
         apply_field!(focus_pane_up);
@@ -715,6 +728,8 @@ impl KeysConfig {
         copy_effective_action_field!(rename_pane, keybinds.rename_pane);
         copy_effective_action_field!(edit_scrollback, keybinds.edit_scrollback);
         copy_effective_action_field!(copy_mode, keybinds.copy_mode);
+        copy_effective_action_field!(jump_prompt_up, keybinds.jump_prompt_up);
+        copy_effective_action_field!(jump_prompt_down, keybinds.jump_prompt_down);
         copy_effective_action_field!(focus_pane_left, keybinds.focus_pane_left);
         copy_effective_action_field!(focus_pane_down, keybinds.focus_pane_down);
         copy_effective_action_field!(focus_pane_up, keybinds.focus_pane_up);
@@ -1001,6 +1016,8 @@ impl Default for KeysConfig {
             rename_pane: BindingConfig::one("prefix+shift+p"),
             edit_scrollback: BindingConfig::one("prefix+e"),
             copy_mode: BindingConfig::one("prefix+["),
+            jump_prompt_up: BindingConfig::one("prefix+comma"),
+            jump_prompt_down: BindingConfig::one("prefix+period"),
             focus_pane_left: BindingConfig::one("prefix+h"),
             focus_pane_down: BindingConfig::one("prefix+j"),
             focus_pane_up: BindingConfig::one("prefix+k"),

@@ -518,6 +518,18 @@
           "description": "Toggle zoom for the focused pane. The legacy key name `fullscreen` is accepted as an alias."
         },
         {
+          "key": "keys.jump_prompt_up",
+          "type": "keybinding",
+          "default": "\"prefix+comma\"",
+          "description": "Scroll the focused pane to the previous OSC 133 prompt mark."
+        },
+        {
+          "key": "keys.jump_prompt_down",
+          "type": "keybinding",
+          "default": "\"prefix+period\"",
+          "description": "Scroll the focused pane to the next OSC 133 prompt mark."
+        },
+        {
           "key": "keys.resize_mode",
           "type": "keybinding",
           "default": "\"prefix+r\"",
